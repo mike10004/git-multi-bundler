@@ -5,7 +5,6 @@
 # pylint: disable=missing-docstring,trailing-whitespace,line-too-long,invalid-name
 
 import stat
-import logging
 import tempfile
 import os
 import os.path
@@ -182,7 +181,29 @@ class TestBundleForReal(unittest.TestCase):
             self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'octocat', 'git-consortium.bundle')), 1)
             self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'Microsoft', 'api-guidelines.bundle')), 1)
             self.assertIsFile((os.path.join(bundles_dir, 'bitbucket.org', 'atlassian_tutorial', 'helloworld.git.bundle')), 1)
+    
+    def test_bundle_fail(self):
+        """Tests bundling a repository that does not exist, causing a failure"""
+        print("test_bundle_fail")
+        repo_urls = [
+            "https://github.com/mike10004/this-repo-does-not-exist.git"
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundles_dir = os.path.join(tmpdir, "repositories")
+            os.mkdir(bundles_dir)
+            num_ok = update_archives.bundle_all(repo_urls, bundles_dir, tmpdir)
+        self.assertEqual(0, num_ok, "num_ok")
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
-    unittest.main()
+    from argparse import ArgumentParser
+    import logging
+    parser = ArgumentParser()
+    parser.add_argument("-l", "--log-level", choices=('DEBUG', 'INFO', 'WARN', 'ERROR'))
+    args = parser.parse_args()
+    if args.log_level:
+        stderr_handler = logging.StreamHandler()
+        for logger_name in (update_archives.__name__,):
+            logger = logging.getLogger(logger_name)
+            logger.addHandler(stderr_handler)
+            logger.setLevel(logging.__dict__[args.log_level])
+    unittest.main(argv=sys.argv[0:1])
