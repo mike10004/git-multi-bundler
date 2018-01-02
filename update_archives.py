@@ -53,7 +53,7 @@ def bundle(repo, treetop, tempdir=None, git='git'):
     with tempfile.TemporaryDirectory(prefix='clone-dest', dir=tempdir) as clone_dest_dir:
         cmd = ['git', 'clone', '--mirror', repo.url, clone_dest_dir]
         _log.debug("executing %s", cmd)
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=git)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=git, env={'GIT_TERMINAL_PROMPT': '0'})
         if proc.returncode != 0:
             _log.error("cloning %s failed: %s", repo.url, proc)
             return None
