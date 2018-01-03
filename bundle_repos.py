@@ -4,6 +4,7 @@
 """Script that archives multiple git repositories."""
 
 # pylint: disable=C0301
+# pylint: disable=missing-docstring
 
 import time
 import re
@@ -134,6 +135,7 @@ def read_git_version():
     return tuple(map(int, filter(lambda n: n is not None, m.groups())))
 
 def check_git_version(git_version):
+    """Check that the version of git that is available meets our minimum requirements (>=2.3)."""
     assert isinstance(git_version, tuple), "git_version must be a tuple of ints"
     assert len(tuple(filter(lambda n: 1 if isinstance(n, int) else 0, git_version))) == len(git_version), "all tuple values must be ints"
     major = git_version[0]
@@ -144,15 +146,15 @@ def check_git_version(git_version):
         if minor < _GIT_VERSION_MINOR_MIN:
             raise GitVersionException(git_version)
 
-def main(): # pylint: disable=missing-docstring
+def main(argv=None): 
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument('indexfile', help="file listing one repository URL per line")
     parser.add_argument('-l', '--log-level', choices=('DEBUG', 'INFO', 'WARN', 'ERROR'), default='INFO', help='set log level', metavar='LEVEL')
     parser.add_argument('--temp-dir', metavar='DIRNAME', help='set temp directory')
     parser.add_argument('--bundles-dir', default=os.path.join(os.getcwd(), 'repositories'), metavar='DIRNAME', help='set bundles tree top directory')
-    parser.add_argument('--delay')
-    args = parser.parse_args()
+    parser.add_argument('--delay', default=1.0, type=float, help="set per-host throttling delay", metavar='SECONDS')
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.__dict__[args.log_level])
     check_git_version(read_git_version())
     with open(args.indexfile, 'rb') as ifile:
