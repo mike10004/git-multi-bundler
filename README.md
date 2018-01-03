@@ -13,9 +13,11 @@ archiving or cataloguing, this program may be for you.
     https://bitbucket.org/atlassian_tutorial/helloworld.git
     https://github.com/Microsoft/api-guidelines.git
 
-This is not tested with URLs that are not HTTPS URLs, but the URL is passed as
+There's currently a prohibition against URLs without HTTPS scheme, meaning no 
+git@github.com (scheme-less) or HTTP (insecure) URLs. The URL is passed as
 an argument to `git clone`, so in theory a `git@github.com:username/repo.git`
-URL *should* work.
+URL could work. URLs with scheme HTTP are disallowed for security reasons, but
+also could work in theory.
 
 The program ignores repositories where cloning fails, unless it fails for all 
 of them, in which case it exits with a nonzero exit code. A common cause of

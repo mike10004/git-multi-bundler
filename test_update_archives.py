@@ -13,6 +13,7 @@ import sys
 import unittest
 import update_archives
 from update_archives import Repository
+import collections
 
 if sys.version_info[0] != 3:
     sys.stderr.write("requires Python 3\n")
@@ -125,6 +126,17 @@ class FakeGitUsingTestCaseTest(FakeGitUsingTestCase):
         print(proc.stderr.decode('utf-8'), file=sys.stderr)
         self.assertEqual(proc.returncode, 1)
 
+class CountingThrottler(update_archives.Throttler):
+
+    def __init__(self, category=''):
+        super(CountingThrottler, self).__init__(0.0)
+        self.counts = collections.defaultdict(int)
+        self.tag = 'COUNTER'
+    
+    def throttle(self, category):
+        self.counts[category] = self.counts[category] + 1
+        super(CountingThrottler, self).throttle(category)
+
 class TestBundle(FakeGitUsingTestCase):
 
     def test_bundle(self):
@@ -139,6 +151,21 @@ class TestBundle(FakeGitUsingTestCase):
                 for f in list_files_recursively(treetop):
                     print("  '{}'".format(f), file=sys.stderr)
             self.assertTrue(os.path.isfile(bundle_name), "expected file to exist at " + bundle_name)
+    
+    def test_bundle_all_throttling(self):
+        repo_urls = [
+            "https://github.com/octocat/Hello-World.git",
+            "https://localhost/foo/bar.git",
+            "https://bitbucket.org/atlassian_tutorial/helloworld.git",
+            "https://github.com/Microsoft/api-guidelines",
+        ]
+        counter = CountingThrottler(0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            update_archives.bundle_all(repo_urls, tmpdir, tmpdir, git=self.git_script, throttler=counter)
+        print("counts: {}".format(counter.counts))
+        self.assertEqual(counter.counts['github.com'], 2)
+        self.assertEqual(counter.counts['bitbucket.org'], 1)
+        self.assertEqual(counter.counts['localhost'], 1)
 
 class TestBundleForReal(unittest.TestCase):
 
@@ -168,11 +195,12 @@ class TestBundleForReal(unittest.TestCase):
             "https://bitbucket.org/atlassian_tutorial/helloworld.git",
             "https://github.com/Microsoft/api-guidelines",
         ]
+        throttler = update_archives.Throttler(2.0)
         with tempfile.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             print("bundles dir: {}".format(bundles_dir))
-            num_ok = update_archives.bundle_all(repo_urls, bundles_dir, tmpdir)
+            num_ok = update_archives.bundle_all(repo_urls, bundles_dir, tmpdir, throttler=throttler)
             self.assertEqual(num_ok, len(repo_urls))
             bundle_files = list_files_recursively(bundles_dir)
             print("bundle files: {}".format(bundle_files))
@@ -193,6 +221,27 @@ class TestBundleForReal(unittest.TestCase):
             os.mkdir(bundles_dir)
             num_ok = update_archives.bundle_all(repo_urls, bundles_dir, tmpdir)
         self.assertEqual(0, num_ok, "num_ok")
+
+class TestGitVersionTest(unittest.TestCase):
+
+    def test_read(self):
+        version = update_archives.read_git_version()
+        self.assertTrue(isinstance(version, tuple))
+        self.assertTrue(len(version) >= 2)
+        self.assertTrue(isinstance(version[0], int))
+        self.assertTrue(isinstance(version[1], int))
+        self.assertGreaterEqual(version[0], 0)
+        self.assertGreaterEqual(version[1], 0)
+
+class TestCheckGitVersion(unittest.TestCase):
+    def test_check_bad(self):
+        for version in [(1, 7, 0), (0, 0, 0), (1, 7), (0, 0), (2, 1), (2, 1, 29)]:
+            with self.assertRaises(update_archives.GitVersionException):
+                update_archives.check_git_version(version)
+    
+    def test_check_good(self):
+        for version in [(2, 3, 0), (2, 3), (2, 3, 9), (2, 11, 0), (2, 11), (3, 0), (3, 0, 0)]:
+            update_archives.check_git_version(version)
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
