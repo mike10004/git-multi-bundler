@@ -11,8 +11,8 @@ import os.path
 import subprocess
 import sys
 import unittest
-import update_archives
-from update_archives import Repository
+import bundle_repos
+from bundle_repos import Repository
 import collections
 
 if sys.version_info[0] != 3:
@@ -84,7 +84,7 @@ GIT_REPLACER_SCRIPT_CONTENT = """#!/bin/bash
 """
 
 def create_script_file(content):
-    fd, scriptpath = tempfile.mkstemp(".sh", "test_update_archives_script")
+    fd, scriptpath = tempfile.mkstemp(".sh", "test_bundle_repos_script")
     os.write(fd, content.encode('utf-8'))
     os.close(fd)
     os.chmod(scriptpath, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
@@ -126,7 +126,7 @@ class FakeGitUsingTestCaseTest(FakeGitUsingTestCase):
         print(proc.stderr.decode('utf-8'), file=sys.stderr)
         self.assertEqual(proc.returncode, 1)
 
-class CountingThrottler(update_archives.Throttler):
+class CountingThrottler(bundle_repos.Throttler):
 
     def __init__(self, category=''):
         super(CountingThrottler, self).__init__(0.0)
@@ -142,7 +142,7 @@ class TestBundle(FakeGitUsingTestCase):
     def test_bundle(self):
         repo = Repository("https://localhost/hsolo/falcon.git")
         with tempfile.TemporaryDirectory() as treetop:
-            bundle_name = update_archives.bundle(repo, treetop, git=self.git_script)
+            bundle_name = bundle_repos.bundle(repo, treetop, git=self.git_script)
             print("created {}".format(bundle_name))
             expected = os.path.join(treetop, 'localhost', 'hsolo', 'falcon.git.bundle')
             self.assertEqual(bundle_name, expected)
@@ -161,7 +161,7 @@ class TestBundle(FakeGitUsingTestCase):
         ]
         counter = CountingThrottler(0)
         with tempfile.TemporaryDirectory() as tmpdir:
-            update_archives.bundle_all(repo_urls, tmpdir, tmpdir, git=self.git_script, throttler=counter)
+            bundle_repos.bundle_all(repo_urls, tmpdir, tmpdir, git=self.git_script, throttler=counter)
         print("counts: {}".format(counter.counts))
         self.assertEqual(counter.counts['github.com'], 2)
         self.assertEqual(counter.counts['bitbucket.org'], 1)
@@ -173,7 +173,7 @@ class TestBundleForReal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
-            bundle_path = update_archives.bundle(Repository("https://github.com/octocat/Hello-World.git"), bundles_dir, tmpdir)
+            bundle_path = bundle_repos.bundle(Repository("https://github.com/octocat/Hello-World.git"), bundles_dir, tmpdir)
             filesize = os.path.getsize(bundle_path)
             print("made bundle: {} ({} bytes)".format(bundle_path, filesize))
             self.assertIsNotNone(bundle_path, "bundle_path is None")
@@ -195,12 +195,12 @@ class TestBundleForReal(unittest.TestCase):
             "https://bitbucket.org/atlassian_tutorial/helloworld.git",
             "https://github.com/Microsoft/api-guidelines",
         ]
-        throttler = update_archives.Throttler(2.0)
+        throttler = bundle_repos.Throttler(2.0)
         with tempfile.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             print("bundles dir: {}".format(bundles_dir))
-            num_ok = update_archives.bundle_all(repo_urls, bundles_dir, tmpdir, throttler=throttler)
+            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir, throttler=throttler)
             self.assertEqual(num_ok, len(repo_urls))
             bundle_files = list_files_recursively(bundles_dir)
             print("bundle files: {}".format(bundle_files))
@@ -219,13 +219,13 @@ class TestBundleForReal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, "repositories")
             os.mkdir(bundles_dir)
-            num_ok = update_archives.bundle_all(repo_urls, bundles_dir, tmpdir)
+            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir)
         self.assertEqual(0, num_ok, "num_ok")
 
 class TestGitVersionTest(unittest.TestCase):
 
     def test_read(self):
-        version = update_archives.read_git_version()
+        version = bundle_repos.read_git_version()
         self.assertTrue(isinstance(version, tuple))
         self.assertTrue(len(version) >= 2)
         self.assertTrue(isinstance(version[0], int))
@@ -236,12 +236,12 @@ class TestGitVersionTest(unittest.TestCase):
 class TestCheckGitVersion(unittest.TestCase):
     def test_check_bad(self):
         for version in [(1, 7, 0), (0, 0, 0), (1, 7), (0, 0), (2, 1), (2, 1, 29)]:
-            with self.assertRaises(update_archives.GitVersionException):
-                update_archives.check_git_version(version)
+            with self.assertRaises(bundle_repos.GitVersionException):
+                bundle_repos.check_git_version(version)
     
     def test_check_good(self):
         for version in [(2, 3, 0), (2, 3), (2, 3, 9), (2, 11, 0), (2, 11), (3, 0), (3, 0, 0)]:
-            update_archives.check_git_version(version)
+            bundle_repos.check_git_version(version)
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
@@ -251,7 +251,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.log_level:
         stderr_handler = logging.StreamHandler()
-        for logger_name in (update_archives.__name__,):
+        for logger_name in (bundle_repos.__name__,):
             logger = logging.getLogger(logger_name)
             logger.addHandler(stderr_handler)
             logger.setLevel(logging.__dict__[args.log_level])

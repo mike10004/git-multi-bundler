@@ -5,7 +5,7 @@ archiving or cataloguing, this program may be for you.
 
 ## Usage
 
-    ./update_archives.py INDEXFILE
+    ./bundle_repos.py INDEXFILE
 
 ...where `INDEXFILE` is a text file containing one repository URL per line, like
 
