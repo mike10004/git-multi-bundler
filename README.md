@@ -1,7 +1,7 @@
 # README
 
 If you have multiple git repositories that you would like to bundle, for 
-archiving or cataloguing, this program may be for you.
+archiving or cataloguing, this program may be for you. Requires Python 3.
 
 ## Usage
 
@@ -28,6 +28,17 @@ if gets a 404 response for an HTTP URL, the reason is that you lack
 authorization, not that the resource doesn't actually exist, so it asks for
 credentials, but we disable the terminal prompt, so it can't get the 
 credentials and aborts.)
+
+## Unit Tests
+
+From the cloned repository directory, execute:
+
+    $ ./run_tests.py
+
+Note that this will run all unit tests, including those that connect to 
+external git repositories like GitHub. To run only the unit tests that 
+stay local, add the `--no-external` flag. To set a more verbose logging 
+level for the `bundle_repos` module, add `--log-level=DEBUG`.
 
 ## To do
 

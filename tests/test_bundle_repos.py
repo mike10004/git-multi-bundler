@@ -14,16 +14,7 @@ import unittest
 import bundle_repos
 from bundle_repos import Repository
 import collections
-
-if sys.version_info[0] != 3:
-    sys.stderr.write("requires Python 3\n")
-    sys.exit(1)
-
-def list_files_recursively(dirpath):
-    all_files = []
-    for root, dirs, files in os.walk(dirpath): # pylint: disable=unused-variable
-        all_files += [os.path.join(root, f) for f in files]
-    return all_files
+import tests
 
 class TestRepository(unittest.TestCase):
 
@@ -148,7 +139,7 @@ class TestBundle(FakeGitUsingTestCase):
             self.assertEqual(bundle_name, expected)
             if not os.path.isfile(bundle_name):
                 print("contents of directory {}".format(treetop), file=sys.stderr)
-                for f in list_files_recursively(treetop):
+                for f in tests.list_files_recursively(treetop):
                     print("  '{}'".format(f), file=sys.stderr)
             self.assertTrue(os.path.isfile(bundle_name), "expected file to exist at " + bundle_name)
     
@@ -166,61 +157,6 @@ class TestBundle(FakeGitUsingTestCase):
         self.assertEqual(counter.counts['github.com'], 2)
         self.assertEqual(counter.counts['bitbucket.org'], 1)
         self.assertEqual(counter.counts['localhost'], 1)
-
-class TestBundleForReal(unittest.TestCase):
-
-    def test_bundle_one(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bundles_dir = os.path.join(tmpdir, 'repositories')
-            os.mkdir(bundles_dir)
-            bundle_path = bundle_repos.bundle(Repository("https://github.com/octocat/Hello-World.git"), bundles_dir, tmpdir)
-            filesize = os.path.getsize(bundle_path)
-            print("made bundle: {} ({} bytes)".format(bundle_path, filesize))
-            self.assertIsNotNone(bundle_path, "bundle_path is None")
-            self.assertGreater(filesize, 0, "bundle file size too small")
-
-    def assertIsFile(self, pathname, min_size=0):
-        assert isinstance(pathname, str)
-        self.assertTrue(os.path.isfile(pathname), "expect file to exist at " + pathname)
-        sz = os.path.getsize(pathname)
-        self.assertGreaterEqual(sz, min_size)
-
-    def test_bundle_all(self):
-        """Tests bundling multiple real repositories. This uses an array of URLs that 
-           represent smallish repositories that are unlikely to go away."""
-        print("test_bundle_all")
-        repo_urls = [
-            "https://github.com/octocat/Hello-World.git",
-            "https://github.com/octocat/git-consortium",
-            "https://bitbucket.org/atlassian_tutorial/helloworld.git",
-            "https://github.com/Microsoft/api-guidelines",
-        ]
-        throttler = bundle_repos.Throttler(2.0)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bundles_dir = os.path.join(tmpdir, 'repositories')
-            os.mkdir(bundles_dir)
-            print("bundles dir: {}".format(bundles_dir))
-            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir, throttler=throttler)
-            self.assertEqual(num_ok, len(repo_urls))
-            bundle_files = list_files_recursively(bundles_dir)
-            print("bundle files: {}".format(bundle_files))
-            self.assertEqual(len(bundle_files), len(repo_urls))
-            self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'octocat', 'Hello-World.git.bundle')), 1)
-            self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'octocat', 'git-consortium.bundle')), 1)
-            self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'Microsoft', 'api-guidelines.bundle')), 1)
-            self.assertIsFile((os.path.join(bundles_dir, 'bitbucket.org', 'atlassian_tutorial', 'helloworld.git.bundle')), 1)
-    
-    def test_bundle_fail(self):
-        """Tests bundling a repository that does not exist, causing a failure"""
-        print("test_bundle_fail")
-        repo_urls = [
-            "https://github.com/mike10004/this-repo-does-not-exist.git"
-        ]
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bundles_dir = os.path.join(tmpdir, "repositories")
-            os.mkdir(bundles_dir)
-            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir)
-        self.assertEqual(0, num_ok, "num_ok")
 
 class TestGitVersionTest(unittest.TestCase):
 
@@ -243,16 +179,3 @@ class TestCheckGitVersion(unittest.TestCase):
         for version in [(2, 3, 0), (2, 3), (2, 3, 9), (2, 11, 0), (2, 11), (3, 0), (3, 0, 0)]:
             bundle_repos.check_git_version(version)
 
-if __name__ == '__main__':
-    from argparse import ArgumentParser
-    import logging
-    parser = ArgumentParser()
-    parser.add_argument("-l", "--log-level", choices=('DEBUG', 'INFO', 'WARN', 'ERROR'))
-    args = parser.parse_args()
-    if args.log_level:
-        stderr_handler = logging.StreamHandler()
-        for logger_name in (bundle_repos.__name__,):
-            logger = logging.getLogger(logger_name)
-            logger.addHandler(stderr_handler)
-            logger.setLevel(logging.__dict__[args.log_level])
-    unittest.main(argv=sys.argv[0:1])
