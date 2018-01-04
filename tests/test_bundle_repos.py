@@ -15,6 +15,7 @@ import bundle_repos
 from bundle_repos import Repository
 import collections
 import tests
+import re
 
 class TestRepository(unittest.TestCase):
 
@@ -60,15 +61,19 @@ class TestRepository(unittest.TestCase):
 
 GIT_REPLACER_SCRIPT_CONTENT = """#!/bin/bash
     set -e
-    echo $0 $@
     CMD=$1
     if [ "$CMD" == "clone" ] ; then
+      echo $0 $@
       CLONE_DEST="${@: -1:1}"             # destination dir is last argument
       mkdir -vp "$CLONE_DEST"
     elif [ "$CMD" == "bundle" ] ; then
+      echo $0 $@
       BUNDLE_PATH="${@: -2:1}"            # bundle pathname is penultimate argument
       touch "$BUNDLE_PATH"
+    elif [ "$CMD" == "for-each-ref" ] ; then
+      echo -n "$PWD" | sha1sum | cut -f1 -d' '
     else
+      echo $0 $@
       echo "$CMD is not a git command" >&2
       exit 1
     fi
@@ -85,6 +90,7 @@ class FakeGitUsingTestCase(unittest.TestCase):
 
     def setUp(self):
         self.git_script = create_script_file(GIT_REPLACER_SCRIPT_CONTENT)
+        self.git_runner = bundle_repos.GitRunner(self.git_script)
     
     def tearDown(self):
         try:
@@ -95,24 +101,32 @@ class FakeGitUsingTestCase(unittest.TestCase):
 class FakeGitUsingTestCaseTest(FakeGitUsingTestCase):
 
     def test_git_script_clone(self):
-        with tempfile.TemporaryDirectory() as tempdir:
+        with tests.TemporaryDirectory() as tempdir:
             clone_dest = os.path.join(tempdir, 'clone-destination')
-            proc = subprocess.run(['git', 'clone', 'REMOTE_URL', clone_dest], stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=self.git_script)
+            proc = self.git_runner.run(['git', 'clone', 'REMOTE_URL', clone_dest])
             print(proc.stdout.decode('utf-8'))
             print(proc.stderr.decode('utf-8'), file=sys.stderr)
             self.assertEqual(proc.returncode, 0)
     
     def test_git_script_bundle(self):
-        with tempfile.TemporaryDirectory() as tempdir:
+        with tests.TemporaryDirectory() as tempdir:
             bundle_path = os.path.join(tempdir, 'my.bundle')
-            proc = subprocess.run(['git', 'bundle', 'create', bundle_path, "--all"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=self.git_script)
+            proc = self.git_runner.run(['git', 'bundle', 'create', bundle_path, "--all"])
             print(proc.stdout.decode('utf-8'))
             print(proc.stderr.decode('utf-8'), file=sys.stderr)
             self.assertEqual(proc.returncode, 0)
             self.assertTrue(os.path.isfile(bundle_path), "bundle not created: " + bundle_path)
 
+    def test_git_script_print_latest_commit(self):
+        with tests.TemporaryDirectory() as tempdir:
+            clone_dir = os.path.join(tempdir, 'cloned-dir')
+            os.makedirs(clone_dir)
+            proc = self.git_runner.run(bundle_repos._GIT_CMD_PRINT_LATEST_COMMIT, cwd=clone_dir)
+            self.assertEqual(proc.returncode, 0)
+            self.assertRegex(proc.stdout.decode('utf-8'), r'^[a-f0-9]{40}')
+
     def test_git_script_fail(self):
-        proc = subprocess.run(['git', 'fail', 'yolo'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=self.git_script)
+        proc = self.git_runner.run(['git', 'fail', 'yolo'])
         print(proc.stdout.decode('utf-8'))
         print(proc.stderr.decode('utf-8'), file=sys.stderr)
         self.assertEqual(proc.returncode, 1)
@@ -132,7 +146,7 @@ class TestBundle(FakeGitUsingTestCase):
 
     def test_bundle(self):
         repo = Repository("https://localhost/hsolo/falcon.git")
-        with tempfile.TemporaryDirectory() as treetop:
+        with tests.TemporaryDirectory() as treetop:
             bundle_name = bundle_repos.bundle(repo, treetop, git=self.git_script)
             print("created {}".format(bundle_name))
             expected = os.path.join(treetop, 'localhost', 'hsolo', 'falcon.git.bundle')
@@ -151,8 +165,10 @@ class TestBundle(FakeGitUsingTestCase):
             "https://github.com/Microsoft/api-guidelines",
         ]
         counter = CountingThrottler(0)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bundle_repos.bundle_all(repo_urls, tmpdir, tmpdir, git=self.git_script, throttler=counter)
+        config = bundle_repos.BundleConfig()
+        config.throttler = counter
+        with tests.TemporaryDirectory() as tmpdir:
+            bundle_repos.bundle_all(repo_urls, tmpdir, tmpdir, git=self.git_script, config=config)
         print("counts: {}".format(counter.counts))
         self.assertEqual(counter.counts['github.com'], 2)
         self.assertEqual(counter.counts['bitbucket.org'], 1)
@@ -179,3 +195,26 @@ class TestCheckGitVersion(unittest.TestCase):
         for version in [(2, 3, 0), (2, 3), (2, 3, 9), (2, 11, 0), (2, 11), (3, 0), (3, 0, 0)]:
             bundle_repos.check_git_version(version)
 
+class TestGitRunner(unittest.TestCase):
+
+    def test_cwd(self):
+        with tests.TemporaryDirectory() as tempdir:
+            runner = bundle_repos.GitRunner('pwd')
+            proc = runner.run(['pwd'], cwd=tempdir)
+            self.assertEqual(proc.returncode, 0)
+            actual = proc.stdout.decode('utf8').strip()
+            self.assertEqual(actual, tempdir)
+
+class TestReadGitLatestCommit(unittest.TestCase):
+
+    def test_read_git_latest_commit(self):
+        bundle_path = tests.get_data_dir('sample-repo.bundle')
+        with tests.TemporaryDirectory() as tempdir:
+            git = bundle_repos.GitRunner('git')
+            clone_dir = os.path.join(tempdir, 'cloned-bundle-directory')
+            proc = git.run(['git', 'clone', bundle_path, clone_dir])
+            if proc.returncode != 0: 
+                print(proc.stderr, file=sys.stderr)
+            self.assertEqual(proc.returncode, 0)
+            commit_hash = bundle_repos.read_git_latest_commit(clone_dir)
+            self.assertEqual(commit_hash, '930e77627aa807266746f2795b59b890cba70499')

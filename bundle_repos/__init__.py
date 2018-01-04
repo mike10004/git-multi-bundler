@@ -17,14 +17,43 @@ import tempfile
 import subprocess
 from collections import defaultdict
 
+if sys.version_info[0] != 3:
+    sys.stderr.write("requires Python 3\n")
+    sys.exit(1)
+
 _log = logging.getLogger(__name__)
 _DEFAULT_USERNAME = 'git' # works for github.com and bitbucket.org, which is all we need for now
 _SUPPORTED_SCHEMES = ('https',)
+ERR_USAGE = 1
 ERR_BUNDLE_FAIL = 2
 _GIT_ENV = {'GIT_TERMINAL_PROMPT': '0'}
 _GIT_VERSION_MAJOR_MIN = 2
 _GIT_VERSION_MINOR_MIN = 3
 _GIT_VERSION_MIN = (_GIT_VERSION_MAJOR_MIN, _GIT_VERSION_MINOR_MIN)
+_ENV_THROTTLE_DELAY = 'BUNDLE_REPOS_THROTTLE'
+_DEFAULT_THROTTLER_DELAY_SECONDS = 1.0
+
+class BundleConfig(object):
+
+    def __init__(self):
+        self.ignore_rev = False
+        self.throttler = Throttler(_DEFAULT_THROTTLER_DELAY_SECONDS)
+
+class GitExecutionException(Exception):
+    pass
+
+class GitExitCodeException(GitExecutionException):
+
+    def __init__(self, proc):
+        if isinstance(proc, subprocess.CompletedProcess):
+            super(GitExitCodeException, self).__init__("git exit code = {}".format(proc.returncode))
+        else:
+            super(GitExitCodeException, self).__init__(proc)
+
+class GitVersionException(GitExecutionException):
+    
+    def __init__(self, version):
+        super(GitVersionException, self).__init__("git version >= {} is required; actual version is {}", _GIT_VERSION_MIN, version), 
 
 class Repository(object):
 
@@ -80,54 +109,77 @@ class Throttler(object):
     def no_delay(cls):
         return Throttler(0.0)
 
-def bundle(repo, treetop, tempdir=None, git='git'):
+class GitRunner(object):
+
+    """Shortcut for invoking subprocess.run"""
+
+    def __init__(self, executable, env=_GIT_ENV):
+        self.executable = executable
+        self.env = env
+
+    def run(self, cmd, **kwargs):
+        _log.debug("executing %s", cmd)
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=self.executable, env=self.env, **kwargs)
+
+_GIT_CMD_PRINT_LATEST_COMMIT = ['git', 'for-each-ref', '--count', '1', '--sort=committerdate', 'refs/heads/']
+
+def read_git_latest_commit(clone_dir, git='git'):
+    gitrunner = GitRunner(git)
+    proc = gitrunner.run(_GIT_CMD_PRINT_LATEST_COMMIT, cwd=clone_dir)
+    if proc.returncode != 0:
+        _log.error(proc.stderr)
+        raise GitExitCodeException(proc)
+    return proc.stdout.decode('utf-8').split()[0]
+
+def check_bundle_required(config, remote_clone_path, bundle_path, clone_dest_dir_parent, git='git'):
+    """Checks whether the latest commit on any branch is the same for a repository path and a bundle"""
+    if config.ignore_rev or not os.path.exists(bundle_path):
+        return True
+    remote_clone_revision = read_git_latest_commit(remote_clone_path, git)
+    bundle_clone_dir = tempfile.mkdtemp(prefix='bundle-clone-', dir=clone_dest_dir_parent)
+    proc = GitRunner(git).run(['git', 'clone', '-ns', bundle_path, bundle_clone_dir])
+    if proc.returncode != 0:
+        _log.error(proc.stderr)
+        raise GitExitCodeException(proc)
+    bundle_revision = read_git_latest_commit(bundle_clone_dir, git)
+    return bundle_revision != remote_clone_revision
+
+def bundle(repo, treetop, tempdir=None, git='git', config=None):
+    config = config or BundleConfig()
     _log.debug("bundling %s to %s", repo, treetop)
+    gitrunner = GitRunner(git)
     with tempfile.TemporaryDirectory(prefix='clone-dest-parent', dir=tempdir) as clone_dest_dir_parent:
         clone_dest_dir = tempfile.mkdtemp(prefix='clone-dest', dir=clone_dest_dir_parent)
-        cmd = ['git', 'clone', '--mirror', repo.url, clone_dest_dir]
-        _log.debug("executing %s", cmd)
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=git, env=_GIT_ENV)
+        proc = gitrunner.run(['git', 'clone', '--mirror', repo.url, clone_dest_dir])
         if proc.returncode != 0:
             _log.error("cloning %s failed: %s", repo.url, proc)
             return None
         bundle_path = repo.make_bundle_path(treetop)
         bundle_dir = os.path.dirname(bundle_path)
         os.makedirs(bundle_dir, exist_ok=True)
-        cmd = [git, 'bundle', 'create', bundle_path, '--all']
-        _log.debug("executing %s", cmd)
-        proc = subprocess.run(cmd, cwd=clone_dest_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=git, env=_GIT_ENV)
+        proc = gitrunner.run(['git', 'bundle', 'create', bundle_path, '--all'], cwd=clone_dest_dir)
         if proc.returncode != 0:
             _log.error("bundling %s as %s (from %s) failed: %s", clone_dest_dir, bundle_path, repo, proc)
             return None
         _log.info("bundled %s as %s", repo, bundle_path)
         return bundle_path
 
-_DEFAULT_THROTTLER_DELAY_SECONDS = 1.0
-
-def bundle_all(repo_urls, treetop, tempdir=None, git='git', throttler=None):
-    if throttler is None: 
-        throttler = Throttler(_DEFAULT_THROTTLER_DELAY_SECONDS)
+def bundle_all(repo_urls, treetop, tempdir=None, git='git', config=None):
+    config = config or BundleConfig()
     num_ok = 0
     repos = list(map(lambda url: Repository(url), repo_urls)) # fail fast if any repos are invalid
     for repo in repos:
-        throttler.throttle(repo.host)
+        config.throttler.throttle(repo.host)
         if bundle(repo, treetop, tempdir, git):
             num_ok += 1
     return num_ok
 
-class GitExecutionException(Exception):
-    pass
-
-class GitVersionException(Exception):
-    
-    def __init__(self, version):
-        super(GitVersionException, self).__init__("git version >= {} is required; actual version is {}", _GIT_VERSION_MIN, version), 
-
 def read_git_version():
     """Execute `git --version` and return a tuple of ints representing the version"""
-    proc = subprocess.run(['git', '--version'], stdout=subprocess.PIPE, stderr=sys.stderr, env=_GIT_ENV)
+    proc = GitRunner('git').run(['git', '--version'])
     if proc.returncode != 0:
-        raise GitExecutionException("git returned {}".format(proc.returncode));
+        _log.error(proc.stderr)
+        raise GitExitCodeException(proc);
     text = proc.stdout.decode('utf-8', 'strict').strip()
     m = re.match(r'^git version (\d+)\.(\d+)(?:\.(\d+))?.*$', text)
     if m is None:
@@ -153,7 +205,13 @@ def main(argv=None):
     parser.add_argument('-l', '--log-level', choices=('DEBUG', 'INFO', 'WARN', 'ERROR'), default='INFO', help='set log level', metavar='LEVEL')
     parser.add_argument('--temp-dir', metavar='DIRNAME', help='set temp directory')
     parser.add_argument('--bundles-dir', default=os.path.join(os.getcwd(), 'repositories'), metavar='DIRNAME', help='set bundles tree top directory')
-    parser.add_argument('--delay', default=1.0, type=float, help="set per-host throttling delay", metavar='SECONDS')
+    default_throttle_delay = os.getenv(_ENV_THROTTLE_DELAY, str(_DEFAULT_THROTTLER_DELAY_SECONDS))
+    try:
+        default_throttle_delay = float(default_throttle_delay)
+    except ValueError:
+        _log.error("could not parse value of {} environment variable {}".format(_ENV_THROTTLE_DELAY, default_throttle_delay[:32]))
+        return ERR_USAGE
+    parser.add_argument('--delay', default=default_throttle_delay, type=float, help="set per-host throttling delay (or use " + _ENV_THROTTLE_DELAY + " environment variable)", metavar='SECONDS')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.__dict__[args.log_level])
     check_git_version(read_git_version())
@@ -161,13 +219,11 @@ def main(argv=None):
         urls = ifile.read().decode('utf-8', 'strict').split()
     urls = list(filter(lambda url: len(url.strip()) > 0, urls)) # ignore blank lines
     _log.debug("%s repository urls in %s", len(urls), args.indexfile)
-    num_ok = bundle_all(urls, args.bundles_dir, args.temp_dir)
+    config = BundleConfig()
+    num_ok = bundle_all(urls, args.bundles_dir, args.temp_dir, config)
     if num_ok == 0:
         _log.error("no bundlings succeeded out of %s urls", len(urls))
         return ERR_BUNDLE_FAIL
     if num_ok < len(urls):
         _log.warn("only %s of %s bundlings succeeded", num_ok, len(urls))
     return 0
-
-if __name__ == '__main__':
-    exit(main())

@@ -13,14 +13,17 @@ from bundle_repos import Repository
 import tempfile
 import tests
 
+_TMP_PREFIX = os.path.join(tempfile.gettempdir(), 'bundle-repos-')
+
 class TestBundleForReal(unittest.TestCase):
 
     def test_bundle_one(self):
         print("\ntest_bundle_one")
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             bundle_path = bundle_repos.bundle(Repository("https://github.com/octocat/Hello-World.git"), bundles_dir, tmpdir)
+            self.assertIsNotNone(bundle_path, "bundle returned None")
             filesize = os.path.getsize(bundle_path)
             print("made bundle: {} ({} bytes)".format(bundle_path, filesize))
             self.assertIsNotNone(bundle_path, "bundle_path is None")
@@ -43,11 +46,13 @@ class TestBundleForReal(unittest.TestCase):
             "https://github.com/Microsoft/api-guidelines",
         ]
         throttler = bundle_repos.Throttler(2.0)
-        with tempfile.TemporaryDirectory() as tmpdir:
+        config = bundle_repos.BundleConfig()
+        config.throttler = throttler
+        with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             print("bundles dir: {}".format(bundles_dir))
-            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir, throttler=throttler)
+            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir, config=config)
             self.assertEqual(num_ok, len(repo_urls))
             bundle_files = tests.list_files_recursively(bundles_dir)
             print("bundle files: {}".format(bundle_files))
@@ -63,7 +68,7 @@ class TestBundleForReal(unittest.TestCase):
         repo_urls = [
             "https://github.com/mike10004/this-repo-does-not-exist.git"
         ]
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
             bundles_dir = os.path.join(tmpdir, "repositories")
             os.mkdir(bundles_dir)
             num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir)
