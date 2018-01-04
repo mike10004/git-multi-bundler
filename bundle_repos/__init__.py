@@ -18,9 +18,11 @@ import subprocess
 import pathlib
 from collections import defaultdict
 
+
 if sys.version_info[0] != 3:
     sys.stderr.write("requires Python 3\n")
     sys.exit(1)
+
 
 _log = logging.getLogger(__name__)
 _DEFAULT_USERNAME = 'git' # works for github.com and bitbucket.org, which is all we need for now
@@ -34,13 +36,18 @@ _GIT_VERSION_MINOR_MIN = 3
 _GIT_VERSION_MIN = (_GIT_VERSION_MAJOR_MIN, _GIT_VERSION_MINOR_MIN)
 _ENV_THROTTLE_DELAY = 'BUNDLE_REPOS_THROTTLE'
 _DEFAULT_THROTTLER_DELAY_SECONDS = 1.0
+_GIT_CMD_PRINT_LATEST_COMMIT = ('git', 'for-each-ref', '--count', '1', '--sort=-committerdate', 'refs/heads/')
 
 
 class BundleConfig(object):
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        # set defaults and then apply kwargs
         self.ignore_rev = False
         self.throttler = Throttler(_DEFAULT_THROTTLER_DELAY_SECONDS)
+        for k in kwargs:
+            getattr(self, k)  # make sure attribute default has been defined
+            setattr(self, k, kwargs[k])
 
 
 class GitExecutionException(Exception):
@@ -114,6 +121,7 @@ class Repository(object):
     def __str__(self):
         return "Repository{{{}}}".format(self.url)
 
+
 class Throttler(object):
 
     def __init__(self, delay_seconds):
@@ -138,6 +146,7 @@ class Throttler(object):
     def no_delay(cls):
         return Throttler(0.0)
 
+
 class GitRunner(object):
 
     """Shortcut for invoking subprocess.run"""
@@ -150,7 +159,35 @@ class GitRunner(object):
         _log.debug("executing %s", cmd)
         return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, executable=self.executable, env=self.env, **kwargs)
 
-_GIT_CMD_PRINT_LATEST_COMMIT = ['git', 'for-each-ref', '--count', '1', '--sort=committerdate', 'refs/heads/']
+    def run_clean(self, cmd, **kwargs):
+        proc = self.run(cmd, **kwargs)
+        self._check_clean(proc)
+        return proc
+
+    def _check_clean(self, proc):
+        if proc.returncode != 0:
+            _log.error("exit code %s for %s:\n%s\n", proc.returncode, proc.args, proc.stderr)
+            raise GitExitCodeException(proc)
+
+    def _clone_mirrored(self, repo_arg, clone_dest_dir, clean):
+        os.makedirs(clone_dest_dir, exist_ok=True)
+        clone_dest_git_dir = os.path.join(clone_dest_dir, '.git')
+        clone_proc = self.run(['git', 'clone', '--mirror', repo_arg, clone_dest_git_dir])
+        if clean:
+            self._check_clean(clone_proc)
+        elif clone_proc.returncode != 0:
+            return clone_proc
+        config_proc = self.run(['git', 'config', '--bool', 'core.bare', 'false'], cwd=clone_dest_dir)
+        if clean:
+            self._check_clean(config_proc)
+        return clone_proc
+
+    def clone_mirrored(self, repo_arg, clone_dest_dir):
+        return self._clone_mirrored(repo_arg, clone_dest_dir, False)
+
+    def clone_mirrored_clean(self, repo_arg, clone_dest_dir):
+        return self._clone_mirrored(repo_arg, clone_dest_dir, True)
+
 
 def read_git_latest_commit(clone_dir, git_runner=None):
     git_runner = git_runner or GitRunner('git')
@@ -160,47 +197,54 @@ def read_git_latest_commit(clone_dir, git_runner=None):
         raise GitExitCodeException(proc)
     return proc.stdout.decode('utf-8').split()[0]
 
-def check_bundle_required(config, remote_clone_path, bundle_path, clone_dest_dir_parent, git_runner):
-    """Checks whether the latest commit on any branch is the same for a repository path and a bundle"""
-    if config.ignore_rev or not os.path.exists(bundle_path):
-        return True
-    remote_clone_revision = read_git_latest_commit(remote_clone_path, git_runner)
-    bundle_clone_dir = tempfile.mkdtemp(prefix='bundle-clone-', dir=clone_dest_dir_parent)
-    proc = git_runner.run(['git', 'clone', '-ns', bundle_path, bundle_clone_dir])
-    if proc.returncode != 0:
-        _log.error(proc.stderr)
-        raise GitExitCodeException(proc)
-    bundle_revision = read_git_latest_commit(bundle_clone_dir, git_runner)
-    return bundle_revision != remote_clone_revision
+
+def read_git_latest_commit_from_bundle(bundle_path, tempdir, git_runner=None):
+    git_runner = git_runner or GitRunner('git')
+    with tempfile.TemporaryDirectory(dir=tempdir) as bundle_clone_dir:
+        git_runner.clone_mirrored_clean(bundle_path, bundle_clone_dir)
+        return read_git_latest_commit(bundle_clone_dir, git_runner)
+
 
 class Bundler(object):
 
     def __init__(self, treetop, tempdir, git='git', config=None):
         self.config = config or BundleConfig()
+        assert isinstance(self.config, BundleConfig), "config must be a BundleConfig instance"
         self.treetop = treetop
         assert treetop, "treetop must be nonempty string"
         self.tempdir = tempdir
         assert os.path.isdir(tempdir), "not a directory: {}".format(tempdir[:128])
         self.git_runner = GitRunner(git)
 
+    def check_bundle_required(self, remote_clone_path, bundle_path, clone_dest_dir_parent):
+        """Checks whether the latest commit on any branch is the same for a repository path and a bundle."""
+        if self.config.ignore_rev or not os.path.exists(bundle_path):
+            return True
+        remote_clone_revision = read_git_latest_commit(remote_clone_path, self.git_runner)
+        bundle_revision = read_git_latest_commit_from_bundle(bundle_path, clone_dest_dir_parent, self.git_runner)
+        return bundle_revision != remote_clone_revision
+
     def bundle(self, repo):
         _log.debug("bundling %s to %s", repo, self.treetop)
         with tempfile.TemporaryDirectory(prefix='clone-dest-parent', dir=self.tempdir) as clone_dest_dir_parent:
             clone_dest_dir = tempfile.mkdtemp(prefix='clone-dest', dir=clone_dest_dir_parent)
             repo_arg = repo.get_repository_argument()
-            proc = self.git_runner.run(['git', 'clone', '--mirror', repo_arg, clone_dest_dir])
+            proc = self.git_runner.clone_mirrored(repo_arg, clone_dest_dir)
             if proc.returncode != 0:
                 _log.error("exit code %s indicates failure to clone %s using command %s", proc.returncode, repo, proc.args)
                 _log.error(proc.stderr)
                 return None
             bundle_path = repo.make_bundle_path(self.treetop)
-            bundle_dir = os.path.dirname(bundle_path)
-            os.makedirs(bundle_dir, exist_ok=True)
-            proc = self.git_runner.run(['git', 'bundle', 'create', bundle_path, '--all'], cwd=clone_dest_dir)
-            if proc.returncode != 0:
-                _log.error("bundling %s as %s (from %s) failed: %s", clone_dest_dir, bundle_path, repo, proc)
-                return None
-            _log.info("bundled %s as %s", repo, bundle_path)
+            if self.check_bundle_required(clone_dest_dir, bundle_path, clone_dest_dir_parent):
+                bundle_dir = os.path.dirname(bundle_path)
+                os.makedirs(bundle_dir, exist_ok=True)
+                proc = self.git_runner.run(['git', 'bundle', 'create', bundle_path, '--all'], cwd=clone_dest_dir)
+                if proc.returncode != 0:
+                    _log.error("bundling %s as %s (from %s) failed: %s", clone_dest_dir, bundle_path, repo, proc)
+                    return None
+                _log.info("bundled %s as %s", repo, bundle_path)
+            else:
+                _log.info("skipped bundling %s because synchronized bundle already exists at %s", repo, bundle_path)
             return bundle_path
 
     def bundle_all(self, repo_urls):
@@ -211,6 +255,7 @@ class Bundler(object):
             if self.bundle(repo):
                 num_ok += 1
         return num_ok
+
 
 def read_git_version():
     """Execute `git --version` and return a tuple of ints representing the version"""
@@ -224,6 +269,7 @@ def read_git_version():
         raise ValueError("unexpected stdout from git --version: {}".format(text[:64]));
     return tuple(map(int, filter(lambda n: n is not None, m.groups())))
 
+
 def check_git_version(git_version):
     """Check that the version of git that is available meets our minimum requirements (>=2.3)."""
     assert isinstance(git_version, tuple), "git_version must be a tuple of ints"
@@ -235,6 +281,7 @@ def check_git_version(git_version):
         minor = git_version[1]
         if minor < _GIT_VERSION_MINOR_MIN:
             raise GitVersionException(git_version)
+
 
 def main(argv=None): 
     from argparse import ArgumentParser

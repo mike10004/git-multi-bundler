@@ -17,6 +17,10 @@ import collections
 import tests
 import re
 import pathlib
+import shutil
+
+KNOWN_SAMPLE_REPO_LATEST_COMMIT_HASH = '930e77627aa807266746f2795b59b890cba70499'
+KNOWN_SAMPLE_REPO_BRANCHED_LATEST_COMMIT_HASH = 'bace9af693b7e502f8c40ca1bf9e281f00498004'
 
 class TestRepository(unittest.TestCase):
 
@@ -202,12 +206,13 @@ class CountingThrottler(bundle_repos.Throttler):
 class TestBundle(FakeGitUsingTestCase):
 
     def make_bundler(self, tempdir, config=None):
-        return bundle_repos.Bundler(tempdir, tempdir, self.git_script, config)
+        assert (config is None) or isinstance(config, bundle_repos.BundleConfig)
+        return bundle_repos.Bundler(tempdir, tempdir, git=self.git_script, config=config)
 
     def test_bundle(self):
         repo = Repository("https://localhost/hsolo/falcon.git")
         with tests.TemporaryDirectory() as treetop:
-            bundle_name = self.make_bundler(treetop, treetop).bundle(repo)
+            bundle_name = self.make_bundler(treetop).bundle(repo)
             print("created {}".format(bundle_name))
             expected = os.path.join(treetop, 'localhost', 'hsolo', 'falcon.git.bundle')
             self.assertEqual(bundle_name, expected)
@@ -264,21 +269,48 @@ class TestGitRunner(unittest.TestCase):
             self.assertEqual(proc.returncode, 0)
             actual = proc.stdout.decode('utf8').strip()
             self.assertEqual(actual, tempdir)
+    
+    def test_clone_mirrored_clean(self):
+        bundle_path = tests.get_data_dir('sample-repo-branched.bundle')
+        with tests.TemporaryDirectory() as clone_dir:
+            runner = bundle_repos.GitRunner('git')
+            runner.clone_mirrored_clean(bundle_path, clone_dir)
+            branch_list_lines = runner.run_clean(['git', 'branch', '-l'], cwd=clone_dir).stdout.decode('utf-8').split("\n")
+            branch_list_lines = list(filter(lambda x: x, branch_list_lines))
+            branch_list = [b.strip().split()[-1] for b in branch_list_lines]
+            self.assertSetEqual(set(branch_list), {'master', 'other-branch'})
+
 
 class TestReadGitLatestCommit(unittest.TestCase):
 
+    def setUp(self):
+        self.branched_bundle_path = tests.get_data_dir('sample-repo-branched.bundle')
+        self.unbranched_bundle_path = tests.get_data_dir('sample-repo.bundle')
+
     def test_read_git_latest_commit(self):
-        bundle_path = tests.get_data_dir('sample-repo.bundle')
+        self.do_test_read_git_latest_commit(self.unbranched_bundle_path, KNOWN_SAMPLE_REPO_LATEST_COMMIT_HASH)
+
+    def test_read_git_latest_commit_branched(self):
+        self.do_test_read_git_latest_commit(self.branched_bundle_path, KNOWN_SAMPLE_REPO_BRANCHED_LATEST_COMMIT_HASH)
+
+    def test_read_git_latest_commit_from_bundle(self):
+        self.do_test_read_git_latest_commit_from_bundle(self.unbranched_bundle_path, KNOWN_SAMPLE_REPO_LATEST_COMMIT_HASH)
+
+    def test_read_git_latest_commit_branched_from_bundle(self):
+        self.do_test_read_git_latest_commit_from_bundle(self.branched_bundle_path, KNOWN_SAMPLE_REPO_BRANCHED_LATEST_COMMIT_HASH)
+
+    def do_test_read_git_latest_commit_from_bundle(self, bundle_path, expected_hash):
+        with tests.TemporaryDirectory() as tempdir:
+            commit_hash = bundle_repos.read_git_latest_commit_from_bundle(bundle_path, tempdir)
+            self.assertEqual(commit_hash, expected_hash)
+
+    def do_test_read_git_latest_commit(self, bundle_path, expected_hash):
         with tests.TemporaryDirectory() as tempdir:
             git = bundle_repos.GitRunner('git')
             clone_dir = os.path.join(tempdir, 'cloned-bundle-directory')
-            proc = git.run(['git', 'clone', bundle_path, clone_dir])
-            if proc.returncode != 0: 
-                print(proc.stderr, file=sys.stderr)
-            self.assertEqual(proc.returncode, 0)
+            git.clone_mirrored_clean(bundle_path, clone_dir)
             commit_hash = bundle_repos.read_git_latest_commit(clone_dir)
-            KNOWN_COMMIT_HASH = '930e77627aa807266746f2795b59b890cba70499'
-            self.assertEqual(commit_hash, KNOWN_COMMIT_HASH)
+            self.assertEqual(commit_hash, expected_hash)
 
 class TestBundleFromBundleSource(tests.EnhancedTestCase):
 
@@ -293,11 +325,72 @@ class TestBundleFromBundleSource(tests.EnhancedTestCase):
             self.assertIsNotNone(bundle_path, "bundle path is None")
             self.assertBundleVerifies(bundle_path)
 
-@unittest.skip
-class TestBundleRevisionCheck(unittest.TestCase):
+class TestBundleConfig(tests.EnhancedTestCase):
+
+    def test_kwargs(self):
+        c = bundle_repos.BundleConfig(ignore_rev=True)
+        self.assertTrue(c.ignore_rev)
+    
+    def test_kwargs_bad_arg(self):
+        with self.assertRaises(AttributeError):
+            bundle_repos.BundleConfig(foo='bar')
+
+
+class TestBundleRevisionCheck(tests.EnhancedTestCase):
 
     def test_bundle_required(self):
-        raise NotImplementedError()
+        source_bundle_path = tests.get_data_dir('sample-repo-branched.bundle')
+        source_bundle_uri = pathlib.PurePath(source_bundle_path).as_uri()
+        original_bundle_path = tests.get_data_dir('sample-repo.bundle')
+        original_hash = tests.hash_file(original_bundle_path)
+        with tests.TemporaryDirectory() as tmpdir:
+            repo = Repository(source_bundle_uri)
+            dest_bundle_path = repo.make_bundle_path(tmpdir)
+            os.makedirs(os.path.dirname(dest_bundle_path))
+            shutil.copyfile(original_bundle_path, dest_bundle_path)
+            old_metadata = os.stat(dest_bundle_path)
+            bundler = bundle_repos.Bundler(tmpdir, tmpdir)
+            old_latest_commit = bundle_repos.read_git_latest_commit_from_bundle(dest_bundle_path, tmpdir, bundler.git_runner)
+            assert old_latest_commit == KNOWN_SAMPLE_REPO_LATEST_COMMIT_HASH
+            new_bundle_path = bundler.bundle(repo)
+            self.assertEqual(new_bundle_path, dest_bundle_path)
+            new_latest_commit = bundle_repos.read_git_latest_commit_from_bundle(new_bundle_path, tmpdir, bundler.git_runner)
+            self.assertEqual(new_latest_commit, KNOWN_SAMPLE_REPO_BRANCHED_LATEST_COMMIT_HASH, "latest commit hash from sample-repo-branched is incorrect")
+            new_hash = tests.hash_file(new_bundle_path)
+            new_metadata = os.stat(new_bundle_path)
+            self.assertNotEqual(new_metadata, old_metadata, "metadata should have changed")
+            self.assertNotEqual(new_hash, original_hash, "hash should have changed")
     
-    def test_bundle_not_required(self):
-        raise NotImplementedError()
+    def test_bundle_not_required_skip(self):
+        source_bundle_path = tests.get_data_dir('sample-repo.bundle')
+        source_bundle_uri = pathlib.PurePath(source_bundle_path).as_uri()
+        original_bundle_path = tests.get_data_dir('sample-repo.bundle')
+        original_hash = tests.hash_file(original_bundle_path)
+        with tests.TemporaryDirectory() as tmpdir:
+            repo = Repository(source_bundle_uri)
+            dest_bundle_path = repo.make_bundle_path(tmpdir)
+            os.makedirs(os.path.dirname(dest_bundle_path))
+            shutil.copyfile(original_bundle_path, dest_bundle_path)
+            original_metadata = os.stat(dest_bundle_path)
+            new_bundle_path = bundle_repos.Bundler(tmpdir, tmpdir).bundle(repo)
+            self.assertEqual(new_bundle_path, dest_bundle_path)
+            new_hash = tests.hash_file(new_bundle_path)
+            self.assertEqual(new_hash, original_hash, "hash should NOT have changed")
+            new_metadata = os.stat(new_bundle_path)
+            self.assertEqual(new_metadata, original_metadata, "file metadata should NOT have changed")
+
+    def test_bundle_not_required_force(self):
+        source_bundle_path = tests.get_data_dir('sample-repo.bundle')
+        source_bundle_uri = pathlib.PurePath(source_bundle_path).as_uri()
+        original_bundle_path = tests.get_data_dir('sample-repo.bundle')
+        with tests.TemporaryDirectory() as tmpdir:
+            repo = Repository(source_bundle_uri)
+            dest_bundle_path = repo.make_bundle_path(tmpdir)
+            os.makedirs(os.path.dirname(dest_bundle_path))
+            shutil.copyfile(original_bundle_path, dest_bundle_path)
+            original_metadata = os.stat(dest_bundle_path)
+            config = bundle_repos.BundleConfig(ignore_rev=True)
+            new_bundle_path = bundle_repos.Bundler(tmpdir, tmpdir, config=config).bundle(repo)
+            self.assertEqual(new_bundle_path, dest_bundle_path)
+            new_metadata = os.stat(new_bundle_path)
+            self.assertNotEqual(new_metadata, original_metadata, "file metadata should have changed")

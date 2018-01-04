@@ -4,6 +4,7 @@ import sys
 import unittest
 import tempfile
 import bundle_repos
+import hashlib
 
 if sys.version_info[0] != 3:
     sys.stderr.write("requires Python 3\n")
@@ -16,10 +17,22 @@ def list_files_recursively(dirpath):
     return all_files
 
 def get_data_dir(relative_path=None):
-    """Gets the pathname of the test data directory or an absolute path beneath the test data directory"""
+    """Gets the pathname of the test data directory or an absolute path beneath the test data directory."""
     parent = os.path.dirname(os.path.dirname(__file__))
     test_data_dir = os.path.join(parent, 'testdata')
-    return test_data_dir if relative_path is None else os.path.join(test_data_dir, relative_path)
+    assert os.path.isdir(test_data_dir)
+    if relative_path is None:
+        return test_data_dir
+    filepath = os.path.join(test_data_dir, relative_path)
+    assert os.path.exists(filepath), "not found: {}".format(filepath)
+    return filepath
+
+def hash_file(pathname):
+    """Returns a byte string that is the SHA-256 hash of the file at the given pathname."""
+    h = hashlib.sha256()
+    with open(pathname, 'rb') as ifile:
+        h.update(ifile.read())
+    return h.digest()
 
 def TemporaryDirectory():
     return tempfile.TemporaryDirectory(prefix='bundle-repos-tests-')
@@ -30,6 +43,13 @@ class TestGetDataDir(unittest.TestCase):
         pathname = get_data_dir()
         print("test data dir: {}".format(pathname))
         self.assertIsNotNone(pathname)
+        self.assertTrue(os.path.isdir(pathname))
+
+    def test_get_data_dir_file(self):
+        pathname = get_data_dir('sample-repo.bundle')
+        print("test data file: {}".format(pathname))
+        self.assertIsNotNone(pathname)
+        self.assertTrue(os.path.isfile(pathname))
 
 class EnhancedTestCase(unittest.TestCase):
 
