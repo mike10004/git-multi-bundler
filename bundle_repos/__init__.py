@@ -213,7 +213,7 @@ class Bundler(object):
         self.treetop = treetop
         assert treetop, "treetop must be nonempty string"
         self.tempdir = tempdir
-        assert os.path.isdir(tempdir), "not a directory: {}".format(tempdir[:128])
+        assert tempdir is None or os.path.isdir(tempdir), "not a directory: {}".format(tempdir[:128])
         self.git_runner = GitRunner(git)
 
     def check_bundle_required(self, remote_clone_path, bundle_path, clone_dest_dir_parent):
