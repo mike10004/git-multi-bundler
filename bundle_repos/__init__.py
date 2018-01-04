@@ -15,6 +15,7 @@ import os
 import logging
 import tempfile
 import subprocess
+import pathlib
 from collections import defaultdict
 
 if sys.version_info[0] != 3:
@@ -23,9 +24,10 @@ if sys.version_info[0] != 3:
 
 _log = logging.getLogger(__name__)
 _DEFAULT_USERNAME = 'git' # works for github.com and bitbucket.org, which is all we need for now
-_SUPPORTED_SCHEMES = ('https',)
+_SUPPORTED_SCHEMES = ('https', 'file')
 ERR_USAGE = 1
 ERR_BUNDLE_FAIL = 2
+FILESYSTEM_DIR_BASENAME = '_filesystem'
 _GIT_ENV = {'GIT_TERMINAL_PROMPT': '0'}
 _GIT_VERSION_MAJOR_MIN = 2
 _GIT_VERSION_MINOR_MIN = 3
@@ -33,14 +35,17 @@ _GIT_VERSION_MIN = (_GIT_VERSION_MAJOR_MIN, _GIT_VERSION_MINOR_MIN)
 _ENV_THROTTLE_DELAY = 'BUNDLE_REPOS_THROTTLE'
 _DEFAULT_THROTTLER_DELAY_SECONDS = 1.0
 
+
 class BundleConfig(object):
 
     def __init__(self):
         self.ignore_rev = False
         self.throttler = Throttler(_DEFAULT_THROTTLER_DELAY_SECONDS)
 
+
 class GitExecutionException(Exception):
     pass
+
 
 class GitExitCodeException(GitExecutionException):
 
@@ -50,10 +55,18 @@ class GitExitCodeException(GitExecutionException):
         else:
             super(GitExitCodeException, self).__init__(proc)
 
+
 class GitVersionException(GitExecutionException):
     
     def __init__(self, version):
         super(GitVersionException, self).__init__("git version >= {} is required; actual version is {}", _GIT_VERSION_MIN, version), 
+
+
+def check_no_file_separator_chars(parts):
+    for p in parts:
+        if '/' in p:
+            raise ValueError("URL path must not contain / character (escaped as %2F)")
+
 
 class Repository(object):
 
@@ -62,24 +75,40 @@ class Repository(object):
     def __init__(self, url):
         self.url = url
         result = urllib.parse.urlparse(url) # scheme://netloc/path;parameters?query#fragment
-        assert result.port is None   # port not supported here
-        self.host = result.hostname
-        assert self.host is not None and self.host != ''
+        self.scheme = result.scheme
+        assert self.scheme in _SUPPORTED_SCHEMES, "not a supported scheme: {}".format(repr(result.scheme))
+        assert result.port is None   # port not supported here for now; make_bundle_path naming convention would have to be adjusted
+        self.host = '_filesystem' if result.scheme == 'file' else result.hostname
+        assert self.scheme == 'file' or (self.host is not None and self.host != ''), "host is required if scheme is not 'file'"
         path_parts = list(filter(lambda p: p != '', result.path.split('/')))
+        decoded_path_prefix_parts = [urllib.parse.unquote_plus(p, errors='strict') for p in path_parts[:-1]]
+        self._decoded_path_prefix = '/'.join(decoded_path_prefix_parts)
+        check_no_file_separator_chars(decoded_path_prefix_parts)
         self.path_prefix = '/'.join(path_parts[:-1])
         self.repo_name = path_parts[-1]
+        self._decoded_repo_name = urllib.parse.unquote_plus(self.repo_name, errors='strict')
+        check_no_file_separator_chars((self._decoded_repo_name,))
         self.username = result.username or _DEFAULT_USERNAME
         assert self.path_prefix
-        self.scheme = result.scheme
-        assert self.scheme in _SUPPORTED_SCHEMES
-
+    
+    def get_repository_argument(self):
+        """Gets the string to be used as the `git clone` argument."""
+        if self.scheme == 'file':
+            parsed = urllib.parse.urlparse(self.url)
+            return urllib.parse.unquote_plus(parsed.path)
+        else:
+            return self.url
+    
     def decoded_path_prefix(self):
-        return urllib.parse.unquote_plus(self.path_prefix, errors='strict')
+        return self._decoded_path_prefix
 
     def decoded_repo_name(self):
-        return urllib.parse.unquote_plus(self.repo_name, errors='strict')
+        return self._decoded_repo_name
 
     def make_bundle_path(self, parent):
+        """Construct the pathname of the bundle that is to represent this repository
+           in the filesystem beneath the given parent directory. Note that bundles created
+           from source bundles will have a .bundle.bundle suffix."""
         return os.path.join(parent, self.host, self.decoded_path_prefix(), self.decoded_repo_name() + '.bundle')
 
     def __str__(self):
@@ -158,9 +187,11 @@ class Bundler(object):
         _log.debug("bundling %s to %s", repo, self.treetop)
         with tempfile.TemporaryDirectory(prefix='clone-dest-parent', dir=self.tempdir) as clone_dest_dir_parent:
             clone_dest_dir = tempfile.mkdtemp(prefix='clone-dest', dir=clone_dest_dir_parent)
-            proc = self.git_runner.run(['git', 'clone', '--mirror', repo.url, clone_dest_dir])
+            repo_arg = repo.get_repository_argument()
+            proc = self.git_runner.run(['git', 'clone', '--mirror', repo_arg, clone_dest_dir])
             if proc.returncode != 0:
-                _log.error("cloning %s failed: %s", repo.url, proc)
+                _log.error("exit code %s indicates failure to clone %s using command %s", proc.returncode, repo, proc.args)
+                _log.error(proc.stderr)
                 return None
             bundle_path = repo.make_bundle_path(self.treetop)
             bundle_dir = os.path.dirname(bundle_path)

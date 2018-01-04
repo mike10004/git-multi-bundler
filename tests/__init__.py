@@ -3,6 +3,7 @@ import os.path
 import sys
 import unittest
 import tempfile
+import bundle_repos
 
 if sys.version_info[0] != 3:
     sys.stderr.write("requires Python 3\n")
@@ -29,3 +30,21 @@ class TestGetDataDir(unittest.TestCase):
         pathname = get_data_dir()
         print("test data dir: {}".format(pathname))
         self.assertIsNotNone(pathname)
+
+class EnhancedTestCase(unittest.TestCase):
+
+    def assertIsFile(self, pathname, min_size=0):
+        assert isinstance(pathname, str)
+        self.assertTrue(os.path.isfile(pathname), "expect file to exist at " + pathname)
+        sz = os.path.getsize(pathname)
+        self.assertGreaterEqual(sz, min_size)
+
+    def assertBundleVerifies(self, bundle_path):
+        self.assertIsFile(bundle_path, 1)
+        with TemporaryDirectory() as tmpdir:
+            proc = bundle_repos.GitRunner('git').run(['git', 'bundle', 'verify', bundle_path], cwd=tmpdir)
+            if proc.returncode != 0:
+                print("bundle verification failed on {}".format(bundle_path), file=sys.stderr)
+                print(proc.stdout, file=sys.stdout)
+                print(proc.stderr, file=sys.stderr)
+            self.assertEqual(proc.returncode, 0)

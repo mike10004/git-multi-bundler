@@ -15,7 +15,7 @@ import tests
 
 _TMP_PREFIX = os.path.join(tempfile.gettempdir(), 'bundle-repos-')
 
-class TestBundleForReal(unittest.TestCase):
+class TestBundleForReal(tests.EnhancedTestCase):
 
     def test_bundle_one(self):
         print("\ntest_bundle_one")
@@ -24,16 +24,7 @@ class TestBundleForReal(unittest.TestCase):
             os.mkdir(bundles_dir)
             bundle_path = bundle_repos.Bundler(bundles_dir, tmpdir).bundle(Repository("https://github.com/octocat/Hello-World.git"))
             self.assertIsNotNone(bundle_path, "bundle returned None")
-            filesize = os.path.getsize(bundle_path)
-            print("made bundle: {} ({} bytes)".format(bundle_path, filesize))
-            self.assertIsNotNone(bundle_path, "bundle_path is None")
-            self.assertGreater(filesize, 0, "bundle file size too small")
-
-    def assertIsFile(self, pathname, min_size=0):
-        assert isinstance(pathname, str)
-        self.assertTrue(os.path.isfile(pathname), "expect file to exist at " + pathname)
-        sz = os.path.getsize(pathname)
-        self.assertGreaterEqual(sz, min_size)
+            self.assertBundleVerifies(bundle_path)
 
     def test_bundle_all(self):
         """Tests bundling multiple real repositories. This uses an array of URLs that 
@@ -57,10 +48,10 @@ class TestBundleForReal(unittest.TestCase):
             bundle_files = tests.list_files_recursively(bundles_dir)
             print("bundle files: {}".format(bundle_files))
             self.assertEqual(len(bundle_files), len(repo_urls))
-            self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'octocat', 'Hello-World.git.bundle')), 1)
-            self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'octocat', 'git-consortium.bundle')), 1)
-            self.assertIsFile((os.path.join(bundles_dir, 'github.com', 'Microsoft', 'api-guidelines.bundle')), 1)
-            self.assertIsFile((os.path.join(bundles_dir, 'bitbucket.org', 'atlassian_tutorial', 'helloworld.git.bundle')), 1)
+            self.assertBundleVerifies((os.path.join(bundles_dir, 'github.com', 'octocat', 'Hello-World.git.bundle')))
+            self.assertBundleVerifies((os.path.join(bundles_dir, 'github.com', 'octocat', 'git-consortium.bundle')))
+            self.assertBundleVerifies((os.path.join(bundles_dir, 'github.com', 'Microsoft', 'api-guidelines.bundle')))
+            self.assertBundleVerifies((os.path.join(bundles_dir, 'bitbucket.org', 'atlassian_tutorial', 'helloworld.git.bundle')))
     
     def test_bundle_fail(self):
         """Tests bundling a repository that does not exist, causing a failure"""
@@ -72,4 +63,8 @@ class TestBundleForReal(unittest.TestCase):
             bundles_dir = os.path.join(tmpdir, "repositories")
             os.mkdir(bundles_dir)
             num_ok = bundle_repos.Bundler(bundles_dir, tmpdir).bundle_all(repo_urls)
-        self.assertEqual(0, num_ok, "num_ok")
+            self.assertEqual(0, num_ok, "num_ok")
+            for url in repo_urls:
+                potential_bundle_path = Repository(url).make_bundle_path(bundles_dir)
+                self.assertFalse(os.path.exists(potential_bundle_path), "file exists at {} but shouldn't".format(potential_bundle_path))
+        

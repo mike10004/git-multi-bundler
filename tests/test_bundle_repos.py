@@ -16,6 +16,7 @@ from bundle_repos import Repository
 import collections
 import tests
 import re
+import pathlib
 
 class TestRepository(unittest.TestCase):
 
@@ -23,20 +24,59 @@ class TestRepository(unittest.TestCase):
         url = 'https://github.com/mike10004/test-child-repo-1.git'
         r = Repository(url)
         self.assertEqual(r.url, url)
+        self.assertEqual(r.get_repository_argument(), url)
         self.assertEqual(r.scheme, 'https')
         self.assertEqual(r.host, 'github.com')
         self.assertEqual(r.path_prefix, 'mike10004')
         self.assertEqual(r.repo_name, 'test-child-repo-1.git')
     
-    def test_good2(self):
+    def test_good_escapes(self):
+        url = 'https://unscrupulous.com/Username%20With%20Spaces/good%40example.com.git'
+        r = Repository(url)
+        self.assertEqual(r.url, url)
+        self.assertEqual(r.get_repository_argument(), url)
+        self.assertEqual(r.scheme, 'https')
+        self.assertEqual(r.host, 'unscrupulous.com')
+        self.assertEqual(r.decoded_path_prefix(), 'Username With Spaces')
+        self.assertEqual(r.decoded_repo_name(), 'good@example.com.git')
+
+    def test_good_without_dot_git_suffix(self):
         url = 'https://somewhere.else/users/mike10004/test-child-repo-1'
         r = Repository(url)
         self.assertEqual(r.url, url)
+        self.assertEqual(r.get_repository_argument(), url)
         self.assertEqual(r.scheme, 'https')
         self.assertEqual(r.host, 'somewhere.else')
         self.assertEqual(r.path_prefix, 'users/mike10004')
         self.assertEqual(r.repo_name, 'test-child-repo-1')
     
+    def test_bad_bundle_file(self):
+        filepath = '/home/josephine/Developer/bundles/my-project.bundle'
+        with self.assertRaises(AssertionError):
+            Repository(filepath) # because you must make the path a URI 
+
+    def test_good_bundle_file(self):
+        filepath = '/home/josephine/Developer/bundles/my-project.bundle'
+        url = pathlib.PurePath(filepath).as_uri()
+        r = Repository(url)
+        self.assertEqual(r.url, url)
+        self.assertEqual(r.get_repository_argument(), filepath)
+        self.assertEqual(r.scheme, 'file')
+        self.assertEqual(r.host, '_filesystem')
+        self.assertEqual(r.path_prefix, os.path.dirname(filepath).lstrip('/'))
+        self.assertEqual(r.repo_name, 'my-project.bundle')
+
+    def test_good_bundle_file_escapes(self):
+        filepath = '/home/josephine/My Projects/my-project.bundle'
+        url = pathlib.PurePath(filepath).as_uri()
+        r = Repository(url)
+        self.assertEqual(r.url, url)
+        self.assertEqual(r.get_repository_argument(), filepath)
+        self.assertEqual(r.scheme, 'file')
+        self.assertEqual(r.host, '_filesystem')
+        self.assertEqual(r.decoded_path_prefix(), os.path.dirname(filepath).lstrip('/'), "path_prefix")
+        self.assertEqual(r.decoded_repo_name(), 'my-project.bundle')
+
     def test_bad(self):
         with self.assertRaises(AssertionError):
             Repository('https://github.com:443/foo/bar.git')
@@ -48,7 +88,13 @@ class TestRepository(unittest.TestCase):
             Repository('git+ssh://git@github.com/foo/bar.git')
         with self.assertRaises(AssertionError):
             Repository('https://github.com/bar.git')
-    
+
+    def test_bad_url_has_separator_chars(self):
+        with self.assertRaises(ValueError):
+            Repository('https://unconscionable.com/User%2Fname/project.git')
+        with self.assertRaises(ValueError):
+            Repository('https://unconscionable.com/Username/My%2FProject.git')
+
     def test_decoded_path_prefix(self):
         url = 'https://somewhere.else/hello%40world/test-child-repo-1.git'
         r = Repository(url)
@@ -57,7 +103,18 @@ class TestRepository(unittest.TestCase):
     def test_make_bundle_path(self):
         url = 'https://somewhere.else/mpsycho/hello.git'
         r = Repository(url)
-        self.assertEqual(r.make_bundle_path('/home/maria/repos'), '/home/maria/repos/somewhere.else/mpsycho/hello.git.bundle')
+        treetop = '/home/maria/repos'
+        self.assertEqual(r.make_bundle_path(treetop), os.path.join(treetop, 'somewhere.else/mpsycho/hello.git.bundle'))
+
+    def test_make_bundle_path_file_uri(self):
+        filepath = '/path/to/bundles/hello.git.bundle'
+        url = pathlib.Path(filepath).as_uri()
+        r = Repository(url)
+        treetop = '/home/maria/repos'
+        expected = os.path.join(treetop, bundle_repos.FILESYSTEM_DIR_BASENAME, filepath.lstrip('/') + '.bundle')
+        actual = r.make_bundle_path(treetop)
+        self.assertEqual(actual, expected, "expected {} but actual is {}".format(expected, actual))
+
 
 GIT_REPLACER_SCRIPT_CONTENT = """#!/bin/bash
     set -e
@@ -222,6 +279,19 @@ class TestReadGitLatestCommit(unittest.TestCase):
             commit_hash = bundle_repos.read_git_latest_commit(clone_dir)
             KNOWN_COMMIT_HASH = '930e77627aa807266746f2795b59b890cba70499'
             self.assertEqual(commit_hash, KNOWN_COMMIT_HASH)
+
+class TestBundleFromBundleSource(tests.EnhancedTestCase):
+
+    def test_bundle_from_bundle_source(self):
+        source_bundle_path = tests.get_data_dir('sample-repo.bundle')
+        assert os.path.isfile(source_bundle_path)
+        repo = Repository(pathlib.Path(source_bundle_path).as_uri())
+        with tests.TemporaryDirectory() as tmpdir:
+            bundler = bundle_repos.Bundler(tmpdir, tmpdir)
+            bundle_path = bundler.bundle(repo)
+            # not sure of an independent way to check that this bundle is correct
+            self.assertIsNotNone(bundle_path, "bundle path is None")
+            self.assertBundleVerifies(bundle_path)
 
 @unittest.skip
 class TestBundleRevisionCheck(unittest.TestCase):

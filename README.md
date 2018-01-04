@@ -29,6 +29,9 @@ authorization, not that the resource doesn't actually exist, so it asks for
 credentials, but we disable the terminal prompt, so it can't get the 
 credentials and aborts.)
 
+Windows is not supported as an execution platform, but POSIX-like platforms
+should all be supported, though testing only occurs on Linux.
+
 ## Unit Tests
 
 From the cloned repository directory, execute:
