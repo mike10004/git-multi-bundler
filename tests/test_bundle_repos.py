@@ -217,4 +217,14 @@ class TestReadGitLatestCommit(unittest.TestCase):
                 print(proc.stderr, file=sys.stderr)
             self.assertEqual(proc.returncode, 0)
             commit_hash = bundle_repos.read_git_latest_commit(clone_dir)
-            self.assertEqual(commit_hash, '930e77627aa807266746f2795b59b890cba70499')
+            KNOWN_COMMIT_HASH = '930e77627aa807266746f2795b59b890cba70499'
+            self.assertEqual(commit_hash, KNOWN_COMMIT_HASH)
+
+@unittest.skip
+class TestBundleRevisionCheck(unittest.TestCase):
+
+    def test_bundle_required(self):
+        raise NotImplementedError()
+    
+    def test_bundle_not_required(self):
+        raise NotImplementedError()
