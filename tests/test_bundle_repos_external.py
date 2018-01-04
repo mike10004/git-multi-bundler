@@ -22,7 +22,7 @@ class TestBundleForReal(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
-            bundle_path = bundle_repos.bundle(Repository("https://github.com/octocat/Hello-World.git"), bundles_dir, tmpdir)
+            bundle_path = bundle_repos.Bundler(bundles_dir, tmpdir).bundle(Repository("https://github.com/octocat/Hello-World.git"))
             self.assertIsNotNone(bundle_path, "bundle returned None")
             filesize = os.path.getsize(bundle_path)
             print("made bundle: {} ({} bytes)".format(bundle_path, filesize))
@@ -52,7 +52,7 @@ class TestBundleForReal(unittest.TestCase):
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             print("bundles dir: {}".format(bundles_dir))
-            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir, config=config)
+            num_ok = bundle_repos.Bundler(bundles_dir, tmpdir, config=config).bundle_all(repo_urls)
             self.assertEqual(num_ok, len(repo_urls))
             bundle_files = tests.list_files_recursively(bundles_dir)
             print("bundle files: {}".format(bundle_files))
@@ -71,5 +71,5 @@ class TestBundleForReal(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
             bundles_dir = os.path.join(tmpdir, "repositories")
             os.mkdir(bundles_dir)
-            num_ok = bundle_repos.bundle_all(repo_urls, bundles_dir, tmpdir)
+            num_ok = bundle_repos.Bundler(bundles_dir, tmpdir).bundle_all(repo_urls)
         self.assertEqual(0, num_ok, "num_ok")

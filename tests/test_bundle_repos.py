@@ -144,10 +144,13 @@ class CountingThrottler(bundle_repos.Throttler):
 
 class TestBundle(FakeGitUsingTestCase):
 
+    def make_bundler(self, tempdir, config=None):
+        return bundle_repos.Bundler(tempdir, tempdir, self.git_script, config)
+
     def test_bundle(self):
         repo = Repository("https://localhost/hsolo/falcon.git")
         with tests.TemporaryDirectory() as treetop:
-            bundle_name = bundle_repos.bundle(repo, treetop, git=self.git_script)
+            bundle_name = self.make_bundler(treetop, treetop).bundle(repo)
             print("created {}".format(bundle_name))
             expected = os.path.join(treetop, 'localhost', 'hsolo', 'falcon.git.bundle')
             self.assertEqual(bundle_name, expected)
@@ -168,7 +171,7 @@ class TestBundle(FakeGitUsingTestCase):
         config = bundle_repos.BundleConfig()
         config.throttler = counter
         with tests.TemporaryDirectory() as tmpdir:
-            bundle_repos.bundle_all(repo_urls, tmpdir, tmpdir, git=self.git_script, config=config)
+            self.make_bundler(tmpdir, config).bundle_all(repo_urls)
         print("counts: {}".format(counter.counts))
         self.assertEqual(counter.counts['github.com'], 2)
         self.assertEqual(counter.counts['bitbucket.org'], 1)

@@ -123,56 +123,63 @@ class GitRunner(object):
 
 _GIT_CMD_PRINT_LATEST_COMMIT = ['git', 'for-each-ref', '--count', '1', '--sort=committerdate', 'refs/heads/']
 
-def read_git_latest_commit(clone_dir, git='git'):
-    gitrunner = GitRunner(git)
-    proc = gitrunner.run(_GIT_CMD_PRINT_LATEST_COMMIT, cwd=clone_dir)
+def read_git_latest_commit(clone_dir, git_runner=None):
+    git_runner = git_runner or GitRunner('git')
+    proc = git_runner.run(_GIT_CMD_PRINT_LATEST_COMMIT, cwd=clone_dir)
     if proc.returncode != 0:
         _log.error(proc.stderr)
         raise GitExitCodeException(proc)
     return proc.stdout.decode('utf-8').split()[0]
 
-def check_bundle_required(config, remote_clone_path, bundle_path, clone_dest_dir_parent, git='git'):
+def check_bundle_required(config, remote_clone_path, bundle_path, clone_dest_dir_parent, git_runner):
     """Checks whether the latest commit on any branch is the same for a repository path and a bundle"""
     if config.ignore_rev or not os.path.exists(bundle_path):
         return True
-    remote_clone_revision = read_git_latest_commit(remote_clone_path, git)
+    remote_clone_revision = read_git_latest_commit(remote_clone_path, git_runner)
     bundle_clone_dir = tempfile.mkdtemp(prefix='bundle-clone-', dir=clone_dest_dir_parent)
-    proc = GitRunner(git).run(['git', 'clone', '-ns', bundle_path, bundle_clone_dir])
+    proc = git_runner.run(['git', 'clone', '-ns', bundle_path, bundle_clone_dir])
     if proc.returncode != 0:
         _log.error(proc.stderr)
         raise GitExitCodeException(proc)
-    bundle_revision = read_git_latest_commit(bundle_clone_dir, git)
+    bundle_revision = read_git_latest_commit(bundle_clone_dir, git_runner)
     return bundle_revision != remote_clone_revision
 
-def bundle(repo, treetop, tempdir=None, git='git', config=None):
-    config = config or BundleConfig()
-    _log.debug("bundling %s to %s", repo, treetop)
-    gitrunner = GitRunner(git)
-    with tempfile.TemporaryDirectory(prefix='clone-dest-parent', dir=tempdir) as clone_dest_dir_parent:
-        clone_dest_dir = tempfile.mkdtemp(prefix='clone-dest', dir=clone_dest_dir_parent)
-        proc = gitrunner.run(['git', 'clone', '--mirror', repo.url, clone_dest_dir])
-        if proc.returncode != 0:
-            _log.error("cloning %s failed: %s", repo.url, proc)
-            return None
-        bundle_path = repo.make_bundle_path(treetop)
-        bundle_dir = os.path.dirname(bundle_path)
-        os.makedirs(bundle_dir, exist_ok=True)
-        proc = gitrunner.run(['git', 'bundle', 'create', bundle_path, '--all'], cwd=clone_dest_dir)
-        if proc.returncode != 0:
-            _log.error("bundling %s as %s (from %s) failed: %s", clone_dest_dir, bundle_path, repo, proc)
-            return None
-        _log.info("bundled %s as %s", repo, bundle_path)
-        return bundle_path
+class Bundler(object):
 
-def bundle_all(repo_urls, treetop, tempdir=None, git='git', config=None):
-    config = config or BundleConfig()
-    num_ok = 0
-    repos = list(map(lambda url: Repository(url), repo_urls)) # fail fast if any repos are invalid
-    for repo in repos:
-        config.throttler.throttle(repo.host)
-        if bundle(repo, treetop, tempdir, git):
-            num_ok += 1
-    return num_ok
+    def __init__(self, treetop, tempdir, git='git', config=None):
+        self.config = config or BundleConfig()
+        self.treetop = treetop
+        assert treetop, "treetop must be nonempty string"
+        self.tempdir = tempdir
+        assert os.path.isdir(tempdir), "not a directory: {}".format(tempdir[:128])
+        self.git_runner = GitRunner(git)
+
+    def bundle(self, repo):
+        _log.debug("bundling %s to %s", repo, self.treetop)
+        with tempfile.TemporaryDirectory(prefix='clone-dest-parent', dir=self.tempdir) as clone_dest_dir_parent:
+            clone_dest_dir = tempfile.mkdtemp(prefix='clone-dest', dir=clone_dest_dir_parent)
+            proc = self.git_runner.run(['git', 'clone', '--mirror', repo.url, clone_dest_dir])
+            if proc.returncode != 0:
+                _log.error("cloning %s failed: %s", repo.url, proc)
+                return None
+            bundle_path = repo.make_bundle_path(self.treetop)
+            bundle_dir = os.path.dirname(bundle_path)
+            os.makedirs(bundle_dir, exist_ok=True)
+            proc = self.git_runner.run(['git', 'bundle', 'create', bundle_path, '--all'], cwd=clone_dest_dir)
+            if proc.returncode != 0:
+                _log.error("bundling %s as %s (from %s) failed: %s", clone_dest_dir, bundle_path, repo, proc)
+                return None
+            _log.info("bundled %s as %s", repo, bundle_path)
+            return bundle_path
+
+    def bundle_all(self, repo_urls):
+        num_ok = 0
+        repos = list(map(lambda url: Repository(url), repo_urls)) # fail fast if any repos are invalid
+        for repo in repos:
+            self.config.throttler.throttle(repo.host)
+            if self.bundle(repo):
+                num_ok += 1
+        return num_ok
 
 def read_git_version():
     """Execute `git --version` and return a tuple of ints representing the version"""
@@ -220,7 +227,8 @@ def main(argv=None):
     urls = list(filter(lambda url: len(url.strip()) > 0, urls)) # ignore blank lines
     _log.debug("%s repository urls in %s", len(urls), args.indexfile)
     config = BundleConfig()
-    num_ok = bundle_all(urls, args.bundles_dir, args.temp_dir, config)
+    bundler = Bundler(args.bundles_dir, args.temp_dir, 'git', config)
+    num_ok = bundler.bundle_all(urls)
     if num_ok == 0:
         _log.error("no bundlings succeeded out of %s urls", len(urls))
         return ERR_BUNDLE_FAIL
