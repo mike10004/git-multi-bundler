@@ -10,7 +10,8 @@ env:
     - BUNDLE_REPOS_TESTS_SKIP_EXTERNAL=1
 
 install:
-- true
+- git config --global user.email travis@git-multi-bundler.mike10004.travis-ci.org
+- git config --global user.name "Travis Building mike10004/git-multi-bundler"
 
 script:
 - python3 -m unittest discover
