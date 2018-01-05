@@ -285,11 +285,13 @@ def check_git_version(git_version):
 
 def main(argv=None): 
     from argparse import ArgumentParser
+    DEFAULT_BUNDLES_DIR = os.path.join(os.getcwd(), 'repositories')
     parser = ArgumentParser()
     parser.add_argument('indexfile', help="file listing one repository URL per line")
-    parser.add_argument('-l', '--log-level', choices=('DEBUG', 'INFO', 'WARN', 'ERROR'), default='INFO', help='set log level', metavar='LEVEL')
-    parser.add_argument('--temp-dir', metavar='DIRNAME', help='set temp directory')
-    parser.add_argument('--bundles-dir', default=os.path.join(os.getcwd(), 'repositories'), metavar='DIRNAME', help='set bundles tree top directory')
+    parser.add_argument('-l', '--log-level', choices=('DEBUG', 'INFO', 'WARN', 'ERROR'), default='INFO', help="set log level", metavar='LEVEL')
+    parser.add_argument('--temp-dir', metavar='DIRNAME', help="set temp directory")
+    parser.add_argument('--bundles-dir', default=DEFAULT_BUNDLES_DIR, metavar='DIRNAME', help="set bundles tree top directory")
+    parser.add_argument('--ignore-rev', default=False, action='store_true', help="force bundle creation whether or not existing bundle already has the latest commit")
     default_throttle_delay = os.getenv(_ENV_THROTTLE_DELAY, str(_DEFAULT_THROTTLER_DELAY_SECONDS))
     try:
         default_throttle_delay = float(default_throttle_delay)
@@ -304,7 +306,7 @@ def main(argv=None):
         urls = ifile.read().decode('utf-8', 'strict').split()
     urls = list(filter(lambda url: len(url.strip()) > 0, urls)) # ignore blank lines
     _log.debug("%s repository urls in %s", len(urls), args.indexfile)
-    config = BundleConfig()
+    config = BundleConfig(ignore_rev=args.ignore_rev)
     bundler = Bundler(args.bundles_dir, args.temp_dir, 'git', config)
     num_ok = bundler.bundle_all(urls)
     if num_ok == 0:
