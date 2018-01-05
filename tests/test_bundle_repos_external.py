@@ -12,14 +12,16 @@ import bundle_repos
 from bundle_repos import Repository
 import tempfile
 import tests
+import os
 
 _TMP_PREFIX = os.path.join(tempfile.gettempdir(), 'bundle-repos-')
 
+@unittest.skipIf(os.getenv('BUNDLE_REPOS_TESTS_SKIP_EXTERNAL') == '1', "BUNDLE_REPOS_TESTS_SKIP_EXTERNAL=1")
 class TestBundleForReal(tests.EnhancedTestCase):
 
     def test_bundle_one(self):
         print("\ntest_bundle_one")
-        with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
+        with tests.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             bundle_path = bundle_repos.Bundler(bundles_dir, tmpdir).bundle(Repository("https://github.com/octocat/Hello-World.git"))
@@ -39,7 +41,7 @@ class TestBundleForReal(tests.EnhancedTestCase):
         throttler = bundle_repos.Throttler(2.0)
         config = bundle_repos.BundleConfig()
         config.throttler = throttler
-        with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
+        with tests.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, 'repositories')
             os.mkdir(bundles_dir)
             print("bundles dir: {}".format(bundles_dir))
@@ -59,7 +61,7 @@ class TestBundleForReal(tests.EnhancedTestCase):
         repo_urls = [
             "https://github.com/mike10004/this-repo-does-not-exist.git"
         ]
-        with tempfile.TemporaryDirectory(prefix=_TMP_PREFIX) as tmpdir:
+        with tests.TemporaryDirectory() as tmpdir:
             bundles_dir = os.path.join(tmpdir, "repositories")
             os.mkdir(bundles_dir)
             num_ok = bundle_repos.Bundler(bundles_dir, tmpdir).bundle_all(repo_urls)

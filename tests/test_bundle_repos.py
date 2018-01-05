@@ -239,6 +239,21 @@ class TestBundle(FakeGitUsingTestCase):
         self.assertEqual(counter.counts['bitbucket.org'], 1)
         self.assertEqual(counter.counts['localhost'], 1)
 
+    def test_bundle_fail(self):
+        """Tests bundling a repository that does not exist, causing a failure"""
+        print("\ntest_bundle_fail")
+        repo_urls = [
+            "file:///path/to/nowhere.bundle"
+        ]
+        with tests.TemporaryDirectory() as tmpdir:
+            bundles_dir = os.path.join(tmpdir, "repositories")
+            os.mkdir(bundles_dir)
+            num_ok = bundle_repos.Bundler(bundles_dir, tmpdir).bundle_all(repo_urls)
+            self.assertEqual(0, num_ok, "num_ok")
+            for url in repo_urls:
+                potential_bundle_path = Repository(url).make_bundle_path(bundles_dir)
+                self.assertFalse(os.path.exists(potential_bundle_path), "file exists at {} but shouldn't".format(potential_bundle_path))
+
 class TestGitVersionTest(unittest.TestCase):
 
     def test_read(self):
