@@ -1,0 +1,16 @@
+language: python
+
+python:
+  - 3.5
+  - 3.6
+
+env:
+  global:
+    # Disable tests that hit external servers
+    - BUNDLE_REPOS_TESTS_SKIP_EXTERNAL=1
+
+install:
+- true
+
+script:
+- python3 -m unittest discover
