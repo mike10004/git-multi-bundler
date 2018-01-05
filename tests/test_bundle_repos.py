@@ -239,6 +239,9 @@ class TestBundle(FakeGitUsingTestCase):
         self.assertEqual(counter.counts['bitbucket.org'], 1)
         self.assertEqual(counter.counts['localhost'], 1)
 
+
+class TestBundleFail(tests.EnhancedTestCase):
+
     def test_bundle_fail(self):
         """Tests bundling a repository that does not exist, causing a failure"""
         print("\ntest_bundle_fail")
