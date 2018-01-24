@@ -1,3 +1,5 @@
+[![Travis build status](https://img.shields.io/travis/mike10004/git-multi-bundler.svg)](https://travis-ci.org/mike10004/git-multi-bundler)
+
 # README
 
 If you have multiple git repositories that you would like to bundle, for 
