@@ -5,6 +5,7 @@ import unittest
 import tempfile
 import bundle_repos
 import hashlib
+import shutil
 
 if sys.version_info[0] != 3:
     sys.stderr.write("requires Python 3\n")
@@ -57,14 +58,25 @@ class EnhancedTestCase(unittest.TestCase):
         assert isinstance(pathname, str)
         self.assertTrue(os.path.isfile(pathname), "expect file to exist at " + pathname)
         sz = os.path.getsize(pathname)
-        self.assertGreaterEqual(sz, min_size)
+        self.assertGreaterEqual(sz, min_size, "file size is too small")
 
     def assertBundleVerifies(self, bundle_path):
         self.assertIsFile(bundle_path, 1)
+        bundle_copy_path = os.path.join(tempfile.gettempdir(), 'git_bundle_for_verification.bundle')
+        shutil.copyfile(bundle_path, bundle_copy_path)
+        print("bundle copied to", bundle_copy_path)
         with TemporaryDirectory() as tmpdir:
-            proc = bundle_repos.GitRunner('git').run(['git', 'bundle', 'verify', bundle_path], cwd=tmpdir)
+            git_runner = bundle_repos.GitRunner('git')
+            proc = git_runner.run(['git', 'init'], cwd=tmpdir) # must run `git bundle verify` inside a repo directory
+            self.assertEqual(proc.returncode, 0, "git init return code nonzero")    
+            proc = git_runner.run(['git', 'bundle', 'verify', bundle_path], cwd=tmpdir)
             if proc.returncode != 0:
                 print("bundle verification failed on {}".format(bundle_path), file=sys.stderr)
-                print(proc.stdout, file=sys.stdout)
-                print(proc.stderr, file=sys.stderr)
-            self.assertEqual(proc.returncode, 0)
+                stdout_decoded = proc.stdout.decode('utf-8')
+                stderr_decoded = proc.stderr.decode('utf-8')
+                print("stdout:")
+                print(stdout_decoded)
+                print("stderr:")
+                print(stderr_decoded)
+                sys.stdout.flush()
+            self.assertEqual(proc.returncode, 0, "git bundle return code nonzero")
