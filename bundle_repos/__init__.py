@@ -283,6 +283,12 @@ def check_git_version(git_version):
             raise GitVersionException(git_version)
 
 
+def clean_index_urls(urls):
+    urls = filter(lambda url: len(url.strip()) > 0, urls) # ignore blank lines
+    urls = filter(lambda url: not url.lstrip().startswith('#'), urls)
+    return list(urls)
+
+
 def main(argv=None): 
     from argparse import ArgumentParser
     DEFAULT_BUNDLES_DIR = os.path.join(os.getcwd(), 'repositories')
@@ -304,8 +310,11 @@ def main(argv=None):
     check_git_version(read_git_version())
     with open(args.indexfile, 'rb') as ifile:
         urls = ifile.read().decode('utf-8', 'strict').split()
-    urls = list(filter(lambda url: len(url.strip()) > 0, urls)) # ignore blank lines
+    urls = clean_index_urls
     _log.debug("%s repository urls in %s", len(urls), args.indexfile)
+    if len(urls) == 0:
+        _log.error("index does not contain any repository URLs")
+        return 1
     config = BundleConfig(ignore_rev=args.ignore_rev)
     bundler = Bundler(args.bundles_dir, args.temp_dir, 'git', config)
     num_ok = bundler.bundle_all(urls)

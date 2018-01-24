@@ -412,3 +412,25 @@ class TestBundleRevisionCheck(tests.EnhancedTestCase):
             self.assertEqual(new_bundle_path, dest_bundle_path)
             new_metadata = os.stat(new_bundle_path)
             self.assertNotEqual(new_metadata, original_metadata, "file metadata should have changed")
+
+
+class TestCliHelpers(unittest.TestCase):
+
+    def test_clean_index_urls(self):
+        test_cases = [
+            {
+                'input': ["https://hello.com/world", "https://foo.bar/baz"],
+                'output': ["https://hello.com/world", "https://foo.bar/baz"]
+            },
+            {
+                'input': ["https://hello.com/world", "", "https://foo.bar/baz", "    "],
+                'output': ["https://hello.com/world", "https://foo.bar/baz"]
+            },
+            {
+                'input': ["https://hello.com/world", "#https://foo.bar/baz", "#", "https://what.ever/hella", "#   "],
+                'output': ["https://hello.com/world", "https://what.ever/hella"]
+            },
+        ]
+        for test_case in test_cases:
+            output = bundle_repos.clean_index_urls(test_case['input'])
+            self.assertListEqual(output, test_case['output'], 'cleaned output URL list is not what is expected')
