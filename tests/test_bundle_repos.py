@@ -414,7 +414,7 @@ class TestBundleRevisionCheck(tests.EnhancedTestCase):
             self.assertNotEqual(new_metadata, original_metadata, "file metadata should have changed")
 
 
-class TestCliHelpers(unittest.TestCase):
+class TestCli(unittest.TestCase):
 
     def test_clean_index_urls(self):
         test_cases = [
@@ -434,3 +434,16 @@ class TestCliHelpers(unittest.TestCase):
         for test_case in test_cases:
             output = bundle_repos.clean_index_urls(test_case['input'])
             self.assertListEqual(output, test_case['output'], 'cleaned output URL list is not what is expected')
+    
+    def test_main(self):
+        source_bundle_path = tests.get_data_dir('sample-repo-branched.bundle')
+        source_bundle_uri = pathlib.PurePath(source_bundle_path).as_uri()
+        with tempfile.TemporaryDirectory() as tempdir:
+            indexfile = os.path.join(tempdir, 'remote_urls.txt')
+            bundles_dir = os.path.join(tempdir, "bundles_destination")
+            os.makedirs(bundles_dir)
+            with open(indexfile, 'w') as ofile:
+                print(source_bundle_uri, file=ofile)
+            args = ['--log-level', 'DEBUG', '--bundles-dir', bundles_dir, indexfile]
+            returncode = bundle_repos.main(args)
+        self.assertEquals(returncode, 0, "return code from main()")
