@@ -83,7 +83,7 @@ class Repository(object):
         self.url = url
         result = urllib.parse.urlparse(url) # scheme://netloc/path;parameters?query#fragment
         self.scheme = result.scheme
-        assert self.scheme in _SUPPORTED_SCHEMES, "not a supported scheme: {}".format(repr(result.scheme))
+        assert self.scheme in _SUPPORTED_SCHEMES, "not a supported scheme: {} (in {})".format(repr(result.scheme), url)
         assert result.port is None   # port not supported here for now; make_bundle_path naming convention would have to be adjusted
         self.host = '_filesystem' if result.scheme == 'file' else result.hostname
         assert self.scheme == 'file' or (self.host is not None and self.host != ''), "host is required if scheme is not 'file'"
@@ -289,6 +289,10 @@ def clean_index_urls(urls):
     return list(urls)
 
 
+def get_lines(text):
+    return re.split(r'[\n\r]+', text)
+
+
 def main(argv=None): 
     from argparse import ArgumentParser
     DEFAULT_BUNDLES_DIR = os.path.join(os.getcwd(), 'repositories')
@@ -309,8 +313,8 @@ def main(argv=None):
     logging.basicConfig(level=logging.__dict__[args.log_level])
     check_git_version(read_git_version())
     with open(args.indexfile, 'rb') as ifile:
-        urls = ifile.read().decode('utf-8', 'strict').split()
-    urls = clean_index_urls
+        urls = get_lines(ifile.read().decode('utf-8', 'strict'))
+    urls = clean_index_urls(urls)
     _log.debug("%s repository urls in %s", len(urls), args.indexfile)
     if len(urls) == 0:
         _log.error("index does not contain any repository URLs")

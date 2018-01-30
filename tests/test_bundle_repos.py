@@ -416,6 +416,19 @@ class TestBundleRevisionCheck(tests.EnhancedTestCase):
 
 class TestCli(unittest.TestCase):
 
+
+    def test_get_lines(self):
+        test_cases = [
+            ("a\nb\nc\n", ["a", "b", "c", ""]),
+            ("a\nb\nc", ["a", "b", "c"]),
+            ("This is\na string with \r\n all kinds of\n\rline\r\rseparators\n\nmixed together\n\n\ncrazily.", ["This is", "a string with ", " all kinds of", "line", "separators", "mixed together", "crazily."]),
+        ]
+        for text, expected in test_cases:
+            actual = bundle_repos.get_lines(text)
+            self.assertEqual(actual, expected)
+
+
+
     def test_clean_index_urls(self):
         test_cases = [
             {
@@ -430,6 +443,10 @@ class TestCli(unittest.TestCase):
                 'input': ["https://hello.com/world", "#https://foo.bar/baz", "#", "https://what.ever/hella", "#   "],
                 'output': ["https://hello.com/world", "https://what.ever/hella"]
             },
+            {
+                'input': ["# This is a test file", "file:///home/mike/ws/public1/git-multi-bundler/testdata/sample-repo-branched.bundle"],
+                'output': ["file:///home/mike/ws/public1/git-multi-bundler/testdata/sample-repo-branched.bundle"]
+            }
         ]
         for test_case in test_cases:
             output = bundle_repos.clean_index_urls(test_case['input'])
@@ -438,12 +455,14 @@ class TestCli(unittest.TestCase):
     def test_main(self):
         source_bundle_path = tests.get_data_dir('sample-repo-branched.bundle')
         source_bundle_uri = pathlib.PurePath(source_bundle_path).as_uri()
+        print("source bundle uri:", source_bundle_uri)
         with tempfile.TemporaryDirectory() as tempdir:
             indexfile = os.path.join(tempdir, 'remote_urls.txt')
             bundles_dir = os.path.join(tempdir, "bundles_destination")
             os.makedirs(bundles_dir)
             with open(indexfile, 'w') as ofile:
+                print("# This is a test file", file=ofile)
                 print(source_bundle_uri, file=ofile)
             args = ['--log-level', 'DEBUG', '--bundles-dir', bundles_dir, indexfile]
             returncode = bundle_repos.main(args)
-        self.assertEquals(returncode, 0, "return code from main()")
+        self.assertEqual(returncode, 0, "return code from main()")
